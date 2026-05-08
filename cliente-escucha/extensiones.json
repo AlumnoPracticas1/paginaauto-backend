@@ -1,0 +1,18 @@
+{
+  "obligatorios": [],
+  "longitudes": [],
+  "patrones": [],
+  "ignorados": [],
+  "consola": {
+    "error": false,
+    "warn": false
+  },
+  "throttle": {
+    "porMinuto": 0
+  },
+  "uiChecks": {
+    "botonesDisabled": false,
+    "linksVacios": false
+  },
+  "etiqueta": null
+}

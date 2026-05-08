@@ -1,0 +1,17 @@
+{
+  "name": "avantdef-github-app",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Intermediario AvantDefw1: recibe parches aprobados y crea rama + PR en el repo cliente.",
+  "scripts": {
+    "dev": "node --watch server.js",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@octokit/app": "^15.1.0",
+    "@octokit/webhooks": "^13.3.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  }
+}

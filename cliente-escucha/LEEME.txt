@@ -1,0 +1,250 @@
+==================================================================
+ cliente-escucha — instalación en cualquier web
+==================================================================
+
+Esto es lo que hay que copiar en otra página para que el orquestador
+(http://127.0.0.1:8000) la "escuche":
+
+   1. error_capture.js   ← captura errores JS, fetch, recursos y CSS
+   2. mensajes.js        ← (opcional) traduce los mensajes a tus palabras
+
+
+------------------------------------------------------------------
+PASO 1 — copiar los archivos
+------------------------------------------------------------------
+Copia error_capture.js y mensajes.js a la raíz de la web cliente
+(o donde sirva sus assets estáticos).
+
+
+------------------------------------------------------------------
+PASO 2 — pegar esto en el <head> de cada HTML
+------------------------------------------------------------------
+
+   <!-- nombre con el que aparecerá en "Clientes conectados" -->
+   <script>
+     window.APP_NAME    = 'mi-web';            // cambia esto
+     window.APP_RELEASE = '1.0.0';             // opcional
+   </script>
+
+   <!-- mensajes personalizados (opcional) -->
+   <script src="mensajes.js"></script>
+
+   <!-- captura de errores -->
+   <script src="error_capture.js"
+           data-endpoint="http://127.0.0.1:8000"></script>
+
+
+Notas:
+- Si la web cliente y el orquestador están en la misma máquina,
+  data-endpoint="http://127.0.0.1:8000" es lo correcto.
+- Si están en máquinas distintas, pon la IP/host del orquestador.
+- El script debe ir lo más arriba posible del <head> para capturar
+  errores tempranos.
+
+
+------------------------------------------------------------------
+PASO 3 — comprobar
+------------------------------------------------------------------
+1. Abre la web cliente.
+2. F12 → Network → debe verse un POST a /hello con status 200.
+3. Abre el dashboard http://127.0.0.1:8000/ → "Clientes conectados".
+   Tu APP_NAME debe aparecer en la lista.
+
+
+==================================================================
+ PERSONALIZAR LOS MENSAJES DE ERROR
+==================================================================
+
+Abre mensajes.js y edita la lista MENSAJES_PERSONALIZADOS. Cada
+entrada tiene:
+
+   { match: <string o RegExp>, replace: <string> }
+
+Ejemplos:
+
+   // sustituir un substring literal
+   { match: 'NetworkError', replace: 'Sin conexión' },
+
+   // sustituir con expresión regular y capturar grupos ($1, $2)
+   { match: /Cannot read properties of undefined .*'([^']+)'/i,
+     replace: 'Falta el dato "$1"' },
+
+La regla se aplica ANTES de enviar al orquestador, así que en el
+dashboard ya verás el texto traducido. Si ninguna regla coincide,
+se envía el mensaje original tal cual.
+
+Para añadir reglas: edita mensajes.js y recarga la página cliente
+con Ctrl+Shift+R (para saltar caché).
+
+
+==================================================================
+ ¿QUÉ SE CAPTURA?
+==================================================================
+
+- Errores JS sin tratar (window.onerror)
+- Promesas rechazadas (unhandledrejection)
+- Recursos fallidos (<img>, <script>, <link>)
+- Respuestas fetch con status 4xx/5xx y fallos de red
+- Propiedades CSS inválidas en hojas same-origin
+
+Cada error se manda a POST /report con:
+   { source, message, file, line, stack, extra: { app, ... } }
+
+==================================================================
+
+
+
+
+        autofix.capturarError("Letra A no permitida",{ codigo: "ERROR_301" })
+
+
+ERROR MANUAL CREADO PARA EL MISMO Q YO LO DETECTE
+
+
+==================================================================
+ EXTENSION — avisos personalizados desde la linea de comando
+==================================================================
+
+Junto a `mensajes.js` (reglas fijas que mantiene el desarrollador)
+ahora hay una CLI para que QUIEN INSTALA PaginaAuto pueda crear
+sus propios avisos para errores humanos sin tocar codigo:
+
+   node avisos-cli.js              -> menu interactivo
+   node avisos-cli.js list
+   node avisos-cli.js add "texto o /regex/i" "mensaje a mostrar"
+   node avisos-cli.js remove <indice>
+   node avisos-cli.js clear
+
+En Windows tambien sirve el lanzador:  avisos.bat
+
+Las reglas se guardan en `avisos-personalizados.json` y la CLI
+regenera `avisos-personalizados.js` automaticamente. Ese archivo
+se debe cargar en el <head> DESPUES de mensajes.js y ANTES de
+error_capture.js:
+
+   <script src="mensajes.js"></script>
+   <script src="avisos-personalizados.js"></script>
+   <script src="error_capture.js"
+           data-endpoint="http://127.0.0.1:8000"></script>
+   <script src="palabras-prohibidas.js"></script>   <!-- DESPUES de error_capture -->
+
+Ejemplos rapidos:
+
+   node avisos-cli.js add "Letra A no permitida" "Solo numeros"
+   node avisos-cli.js add "/fetch 5\d\d/i" "El servidor esta caido"
+
+------------------------------------------------------------------
+ Palabras prohibidas en inputs (vigilancia automatica)
+------------------------------------------------------------------
+La CLI tambien gestiona una lista de palabras/patrones que NO deben
+aparecer en <input>/<textarea>. Cuando el usuario las escribe se
+dispara un error que captura `error_capture.js` y aparece en el
+dashboard, sin tener que tocar el codigo de los formularios.
+
+   node avisos-cli.js prohibidas
+   node avisos-cli.js prohibir samsung "Samsung no esta permitido"
+   node avisos-cli.js prohibir "/samsung|huawei/i" "Marca no permitida"
+   node avisos-cli.js permitir <indice>
+   node avisos-cli.js limpiar-prohibidas
+
+JSON:  palabras-prohibidas.json
+JS:    palabras-prohibidas.js   (auto-generado, cargar DESPUES de
+       error_capture.js)
+
+Notas:
+- Se ignoran inputs de tipo password/file/hidden.
+- Cada combinacion (palabra + campo + valor) solo dispara una vez
+  por carga de pagina para evitar spam.
+
+
+==================================================================
+ EXTENSIONES VARIAS  (extensiones.json -> extensiones-cliente.js)
+==================================================================
+La misma CLI gestiona ademas estas utilidades, todas activables/
+desactivables sin tocar codigo de la web cliente:
+
+ 3) Campos obligatorios al hacer submit
+      node avisos-cli.js obligatorio "[name=email]" "Email obligatorio"
+      node avisos-cli.js obligatorios
+      node avisos-cli.js quitar-obligatorio <i>
+
+ 4) Limites de longitud por campo
+      node avisos-cli.js longitud "[name=tel]" 9 9 "Telefono 9 digitos"
+      node avisos-cli.js longitudes
+      node avisos-cli.js quitar-longitud <i>
+
+ 5) Patrones de formato (email, dni, lo que sea)
+      node avisos-cli.js patron "[name=email]" "/^[^@]+@[^@]+\.[^@]+$/" "Email mal formado"
+      node avisos-cli.js patrones
+      node avisos-cli.js quitar-patron <i>
+
+ 6) Silenciar errores conocidos (ignorados)
+      node avisos-cli.js ignorar "/ResizeObserver/i" "ruido conocido"
+      node avisos-cli.js ignorados
+      node avisos-cli.js quitar-ignorado <i>
+
+ 7) Capturar console.error / console.warn como errores
+      node avisos-cli.js consola on        (activa error)
+      node avisos-cli.js consola on warn   (activa warn)
+      node avisos-cli.js consola off
+
+ 8) Throttle anti-spam (max errores por minuto, 0 = sin limite)
+      node avisos-cli.js throttle 30
+      node avisos-cli.js throttle 0
+
+ 9) UI checks (clicks en botones disabled, links sin href)
+      node avisos-cli.js ui-checks on
+      node avisos-cli.js ui-checks off
+
+10) Etiqueta de entorno (produccion, staging, dev...)
+      node avisos-cli.js etiqueta produccion
+      node avisos-cli.js etiqueta borrar
+    Se añade en el campo extra.entorno de cada error reportado.
+
+11) Probar un texto contra todas las reglas
+      node avisos-cli.js test "ResizeObserver loop"
+
+12-13) Backup / restore de toda la configuracion
+      node avisos-cli.js exportar              (guarda con fecha)
+      node avisos-cli.js exportar mibackup.json
+      node avisos-cli.js importar mibackup.json
+
+14) Resumen del estado actual
+      node avisos-cli.js estado
+
+15) Probar conexion al orquestador
+      node avisos-cli.js ping
+      node avisos-cli.js ping http://otra-ip:8000
+
+16) Snippet HTML listo para pegar en el <head>
+      node avisos-cli.js instalar
+
+Bonus) Regenerar todos los .js desde los JSON
+      node avisos-cli.js build
+
+------------------------------------------------------------------
+Orden de carga recomendado en el <head>
+------------------------------------------------------------------
+   <script>window.APP_NAME = 'mi-web';</script>
+   <script src="mensajes.js"               defer></script>
+   <script src="avisos-personalizados.js"  defer></script>
+   <script src="error_capture.js"          defer
+           data-endpoint="http://127.0.0.1:8000"></script>
+   <script src="palabras-prohibidas.js"    defer></script>
+   <script src="extensiones-cliente.js"    defer></script>
+
+`extensiones-cliente.js` engancha al fetch que usa error_capture.js,
+asi que tiene que ir DESPUES.
+
+IMPORTANTE: usa `defer` y AUTO-HOSPEDA estos .js en la raiz de tu web.
+Si los sirves desde el orquestador y este cae, el navegador puede
+bloquear el render de la pagina hasta el timeout TCP. Con `defer`
+y los .js en tu propio dominio, el orquestador es 100% opcional
+para que tu pagina cargue.
+
+Aviso para Git Bash: si pasas /regex/flags como argumento, Git Bash
+puede convertirlo en una ruta Windows. Usa  MSYS_NO_PATHCONV=1  o
+el menu interactivo (`node avisos-cli.js`) para evitarlo.
+
+Tras añadir/quitar reglas, recarga la web cliente con Ctrl+Shift+R.
+

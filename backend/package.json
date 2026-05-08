@@ -1,0 +1,20 @@
+{
+  "name": "paginaauto-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "init-db": "node src/init-db.js"
+  },
+  "dependencies": {
+    "@octokit/app": "^15.1.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "mysql2": "^3.11.0",
+    "node-fetch": "^3.3.2",
+    "uuid": "^9.0.1"
+  }
+}
