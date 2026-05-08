@@ -47,6 +47,9 @@ app.get('/panel', (_req, res) => {
 });
 app.use('/', express.static(PANEL_DIR, { index: false, extensions: false, fallthrough: true }));
 
+const CLIENTE_ESCUCHA_DIR = path.resolve(__dirname, '..', 'cliente-escucha');
+app.use('/cliente-escucha', express.static(CLIENTE_ESCUCHA_DIR, { fallthrough: true }));
+
 app.use('/notes', notesRouter);
 app.use('/previews', previewsRouter);
 app.use('/report', reportRouter);
