@@ -32,12 +32,20 @@ app.get('/health', async (_req, res) => {
   res.json({ ok: db, db, python: py, github_proxy: gh });
 });
 
-// Servir el panel de vigilancia (index.html en la raiz de PaginaAuto)
+// El panel (frontend React) ahora vive en Vercel — paginaauto-frontend.
+// Mantenemos / como info y servimos estáticos opcionales si existen.
 const PANEL_DIR = path.resolve(__dirname, '..', '..');
-app.get('/panel', (_req, res) => res.sendFile(path.join(PANEL_DIR, 'index.html')));
-app.get('/', (_req, res) => res.redirect('/panel'));
-// Sirve estáticos (logo, etc.) desde la raíz de PaginaAuto.
-app.use('/', express.static(PANEL_DIR, { index: false, extensions: false }));
+app.get('/', (_req, res) => res.json({
+  ok: true,
+  service: 'paginaauto-backend',
+  frontend: ALLOWED[0] || null,
+  endpoints: ['/health', '/clients', '/previews', '/notes', '/catalog', '/github'],
+}));
+app.get('/panel', (_req, res) => {
+  const file = path.join(PANEL_DIR, 'index.html');
+  res.sendFile(file, (err) => { if (err) res.status(404).json({ error: 'panel no disponible en cloud' }); });
+});
+app.use('/', express.static(PANEL_DIR, { index: false, extensions: false, fallthrough: true }));
 
 app.use('/notes', notesRouter);
 app.use('/previews', previewsRouter);
