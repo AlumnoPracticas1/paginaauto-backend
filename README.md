@@ -9,4 +9,4 @@ Backend del proyecto PaginaAuto.
 - `DEPLOY.md` — notas de despliegue.
 
 ## Frontend
-El panel/UI vive en otro repo: **paginaauto-frontend**.
+El panel/UI vive en otro repo: **paginaauto-frontend**..
