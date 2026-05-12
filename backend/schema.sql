@@ -45,6 +45,14 @@ CREATE TABLE IF NOT EXISTS error_catalog (
   cause         TEXT         NULL,
   solution      TEXT         NULL,
   docs_url      VARCHAR(512) NULL,
+  -- Cómo se repara este error:
+  --   'replace' → sustitución determinista (fix_search → fix_replace), SIN IA
+  --   'ai'      → necesita el pipeline IA (Ollama) para parchear el archivo
+  --   'manual'  → requiere intervención humana / cambios de infra
+  fix_type      VARCHAR(16)  NOT NULL DEFAULT 'ai',
+  fix_search    TEXT         NULL,   -- regex (sintaxis JS) a buscar en el archivo HTML/CSS/JS
+  fix_replace   TEXT         NULL,   -- texto de reemplazo ($1, $2… permitidos)
+  fix_flags     VARCHAR(8)   NULL,   -- flags de la regex, p.ej. 'gi'
   created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uniq_code_platform (code, platform),
   INDEX idx_platform (platform)

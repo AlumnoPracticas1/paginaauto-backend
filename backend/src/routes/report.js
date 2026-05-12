@@ -43,13 +43,23 @@ r.post('/', async (req, res, next) => {
         extraJson,
         deployer || null,
         match?.code || null,
-        match ? `[${match.platform}/${match.code}] ${match.cause || ''}\n→ ${match.solution || ''}` : null,
+        match
+          ? `[${match.platform}/${match.code}] ${match.cause || ''}\n→ ${match.solution || ''}`
+            + (match.fix_type === 'replace'
+                ? '\n✅ Arreglo automático disponible (sin IA): pulsa "Arreglar sin IA" en el panel.'
+                : match.fix_type === 'ai'
+                  ? '\n🤖 Arreglable con IA: pulsa "Arreglar con IA".'
+                  : '\n✋ Requiere intervención manual / cambios de infraestructura.')
+          : null,
       ]
     );
 
     res.json({
       preview_id: id, status: 'pending', priority: initialPriority,
-      deployer, catalog_code: match?.code || null, persisted: true,
+      deployer, catalog_code: match?.code || null,
+      fix_type: match?.fix_type || null,
+      autofixable: match?.fix_type === 'replace',
+      persisted: true,
     });
 
     // Enriquecer con IA en background (best-effort, no bloquea respuesta).

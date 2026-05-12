@@ -7,7 +7,7 @@ const r = Router();
 // Lista catálogo (opcionalmente filtrado por plataforma)
 r.get('/', async (req, res) => {
   const platform = req.query.platform;
-  let sql = 'SELECT id, code, platform, pattern_regex, category, severity, cause, solution, docs_url FROM error_catalog';
+  let sql = 'SELECT id, code, platform, pattern_regex, category, severity, cause, solution, docs_url, fix_type, fix_search, fix_replace, fix_flags FROM error_catalog';
   const params = [];
   if (platform) { sql += ' WHERE platform = ?'; params.push(platform); }
   sql += ' ORDER BY platform, code';
@@ -26,17 +26,23 @@ r.get('/:id', async (req, res) => {
 r.post('/', async (req, res) => {
   const b = req.body || {};
   if (!b.code || !b.platform) return res.status(400).json({ error: 'code y platform requeridos' });
+  const fixType = b.fix_type || (b.fix_search ? 'replace' : 'manual');
   await pool.execute(
-    `INSERT INTO error_catalog (code, platform, pattern_regex, category, severity, cause, solution, docs_url)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO error_catalog (code, platform, pattern_regex, category, severity, cause, solution, docs_url, fix_type, fix_search, fix_replace, fix_flags)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        pattern_regex = VALUES(pattern_regex),
        category      = VALUES(category),
        severity      = VALUES(severity),
        cause         = VALUES(cause),
        solution      = VALUES(solution),
-       docs_url      = VALUES(docs_url)`,
-    [b.code, b.platform, b.pattern_regex || null, b.category || null, b.severity || 'medium', b.cause || null, b.solution || null, b.docs_url || null]
+       docs_url      = VALUES(docs_url),
+       fix_type      = VALUES(fix_type),
+       fix_search    = VALUES(fix_search),
+       fix_replace   = VALUES(fix_replace),
+       fix_flags     = VALUES(fix_flags)`,
+    [b.code, b.platform, b.pattern_regex || null, b.category || null, b.severity || 'medium', b.cause || null, b.solution || null, b.docs_url || null,
+     fixType, b.fix_search || null, b.fix_replace != null ? b.fix_replace : null, b.fix_flags || null]
   );
   await refreshCache();
   res.json({ ok: true });

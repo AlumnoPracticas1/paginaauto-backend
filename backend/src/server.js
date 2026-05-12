@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pool } from './db.js';
@@ -16,7 +17,10 @@ import chatRouter from './routes/chat.js';
 import summaryRouter from './routes/summary.js';
 import catalogRouter from './routes/catalog.js';
 import githubRouter from './routes/github.js';
+import sitesRouter from './routes/sites.js';
 import { refreshCache, detectDeployer, getDeployers } from './detector.js';
+import { scanAllSites } from './html-scanner.js';
+import { getSites } from './sites.js';
 
 const app = express();
 // CORS: si pones ALLOWED_ORIGINS=url1,url2 en .env, restringe a ese listado.
@@ -32,18 +36,22 @@ app.get('/health', async (_req, res) => {
   res.json({ ok: db, db, python: py, github_proxy: gh });
 });
 
-// El panel (frontend React) ahora vive en Vercel — paginaauto-frontend.
-// Mantenemos / como info y servimos estáticos opcionales si existen.
-const PANEL_DIR = path.resolve(__dirname, '..', '..');
+// El panel (frontend) vive en ../paginaauto-frontend (en local) o, en cloud,
+// junto al backend. Usamos el directorio que tenga index.html.
+const FRONTEND_DIR = path.resolve(__dirname, '..', '..', '..', 'paginaauto-frontend');
+const PANEL_DIR = fs.existsSync(path.join(FRONTEND_DIR, 'index.html'))
+  ? FRONTEND_DIR
+  : path.resolve(__dirname, '..', '..');
+const PANEL_FILE = path.join(PANEL_DIR, 'index.html');
 app.get('/', (_req, res) => res.json({
   ok: true,
   service: 'paginaauto-backend',
   frontend: ALLOWED[0] || null,
-  endpoints: ['/health', '/clients', '/previews', '/notes', '/catalog', '/github'],
+  panel: fs.existsSync(PANEL_FILE) ? '/panel' : null,
+  endpoints: ['/health', '/panel', '/clients', '/previews', '/notes', '/catalog', '/sites', '/github'],
 }));
 app.get('/panel', (_req, res) => {
-  const file = path.join(PANEL_DIR, 'index.html');
-  res.sendFile(file, (err) => { if (err) res.status(404).json({ error: 'panel no disponible en cloud' }); });
+  res.sendFile(PANEL_FILE, (err) => { if (err) res.status(404).json({ error: 'panel no disponible (falta paginaauto-frontend/index.html)' }); });
 });
 app.use('/', express.static(PANEL_DIR, { index: false, extensions: false, fallthrough: true }));
 
@@ -57,6 +65,7 @@ app.use('/chat', chatRouter);
 app.use('/summary', summaryRouter);
 app.use('/catalog', catalogRouter);
 app.use('/github', githubRouter);
+app.use('/sites', sitesRouter);
 
 app.get('/deployers', (_req, res) => res.json(getDeployers()));
 
@@ -116,4 +125,17 @@ const PORT = Number(process.env.PORT || 4000);
 app.listen(PORT, async () => {
   await refreshCache();
   console.log(`API http://localhost:${PORT}`);
+  // Escaneo periódico de los sitios registrados (los da de alta arreglahtml.exe).
+  // Detecta errores de HTML estático contra el catálogo y crea previews.
+  const SCAN_EVERY_MS = Math.max(1, Number(process.env.SITES_SCAN_MIN || 3)) * 60 * 1000;
+  const runScan = async () => {
+    try {
+      if (getSites().length === 0) return;
+      const r = await scanAllSites();
+      const created = r.reduce((n, x) => n + (x.created || 0), 0);
+      if (created) console.log(`[html-scanner] ${created} preview(s) nueva(s) en ${r.length} sitio(s).`);
+    } catch (e) { console.warn('[html-scanner]', e.message); }
+  };
+  setTimeout(runScan, 4000);
+  setInterval(runScan, SCAN_EVERY_MS);
 });

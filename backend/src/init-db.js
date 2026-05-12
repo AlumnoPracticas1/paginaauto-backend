@@ -70,6 +70,11 @@ await addColIfMissing('previews', 'catalog_code VARCHAR(64) NULL');
 await addColIfMissing('previews', 'pr_url VARCHAR(512) NULL');
 await addColIfMissing('previews', 'pr_branch VARCHAR(255) NULL');
 await addColIfMissing('previews', 'pr_critical TINYINT(1) NULL');
+// error_catalog: columnas de "arreglo determinista" (autofix sin IA)
+await addColIfMissing('error_catalog', "fix_type VARCHAR(16) NOT NULL DEFAULT 'ai'");
+await addColIfMissing('error_catalog', 'fix_search TEXT NULL');
+await addColIfMissing('error_catalog', 'fix_replace TEXT NULL');
+await addColIfMissing('error_catalog', 'fix_flags VARCHAR(8) NULL');
 
 await conn.query(`USE \`${DB}\``);
 
@@ -91,17 +96,25 @@ console.log(`Seed: ${DEPLOYERS.length} desplegadores ✓`);
 
 // Seed catálogo (idempotente — UPDATE si ya existe el code+platform)
 for (const c of CATALOG) {
+  // fix_type por defecto: 'replace' si el entry trae fix_search; si no, 'manual'
+  // para errores de infra de desplegadores (no se tocan ficheros) y 'ai' si se indica.
+  const fixType = c.fix_type || (c.fix_search ? 'replace' : (c.platform === 'html' ? 'ai' : 'manual'));
   await conn.execute(
-    `INSERT INTO error_catalog (code, platform, pattern_regex, category, severity, cause, solution, docs_url)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO error_catalog (code, platform, pattern_regex, category, severity, cause, solution, docs_url, fix_type, fix_search, fix_replace, fix_flags)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        pattern_regex = VALUES(pattern_regex),
        category      = VALUES(category),
        severity      = VALUES(severity),
        cause         = VALUES(cause),
        solution      = VALUES(solution),
-       docs_url      = VALUES(docs_url)`,
-    [c.code, c.platform, c.pattern_regex || null, c.category || null, c.severity || 'medium', c.cause || null, c.solution || null, c.docs_url || null]
+       docs_url      = VALUES(docs_url),
+       fix_type      = VALUES(fix_type),
+       fix_search    = VALUES(fix_search),
+       fix_replace   = VALUES(fix_replace),
+       fix_flags     = VALUES(fix_flags)`,
+    [c.code, c.platform, c.pattern_regex || null, c.category || null, c.severity || 'medium', c.cause || null, c.solution || null, c.docs_url || null,
+     fixType, c.fix_search || null, c.fix_replace != null ? c.fix_replace : null, c.fix_flags || null]
   );
 }
 console.log(`Seed: ${CATALOG.length} entradas de catálogo ✓`);

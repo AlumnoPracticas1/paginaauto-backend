@@ -5,16 +5,26 @@ import { pool } from './db.js';
 let CATALOG = [];   // [{ id, code, platform, regex, severity, ... }]
 let DEPLOYERS = []; // [{ name, display_name, url_patterns:[], header_hints:[], color }]
 
+// JS no soporta flags inline tipo (?i)…  Muchas entradas del catálogo los usan
+// (heredado del pipeline Python). Los traducimos a flags reales antes de compilar.
+export function compileRegex(src) {
+  if (!src) return null;
+  let flags = '';
+  let body = String(src);
+  const m = body.match(/^\(\?([a-z]+)\)/i);
+  if (m) {
+    for (const f of m[1].toLowerCase()) {
+      if ('imsu'.includes(f) && !flags.includes(f)) flags += f;
+    }
+    body = body.slice(m[0].length);
+  }
+  try { return new RegExp(body, flags); } catch (e) { return null; }
+}
+
 export async function refreshCache() {
   try {
     const [catRows] = await pool.execute('SELECT * FROM error_catalog');
-    CATALOG = catRows.map(r => {
-      let rx = null;
-      if (r.pattern_regex) {
-        try { rx = new RegExp(r.pattern_regex); } catch (e) { rx = null; }
-      }
-      return { ...r, _rx: rx };
-    });
+    CATALOG = catRows.map(r => ({ ...r, _rx: compileRegex(r.pattern_regex) }));
     const [depRows] = await pool.execute('SELECT * FROM deployers');
     DEPLOYERS = depRows.map(r => ({
       ...r,

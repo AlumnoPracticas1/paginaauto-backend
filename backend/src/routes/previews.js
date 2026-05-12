@@ -5,6 +5,8 @@ import { pool } from '../db.js';
 import { pyFetch } from '../python.js';
 import { repairConversation, applyPatchPlan } from '../ollama.js';
 import { isEnabled as ghEnabled, repoForApp, ghProxyPropose } from '../github-proxy.js';
+import { compileRegex } from '../detector.js';
+import { rootForApp as siteRootForApp } from '../sites.js';
 
 const r = Router();
 
@@ -27,6 +29,10 @@ try {
 function appRootFor(app) {
   if (!app) return null;
   const key = String(app).toLowerCase().trim();
+  // 1) sitios registrados por arreglahtml.exe (data/sites.json)
+  const sr = siteRootForApp(key);
+  if (sr) return sr;
+  // 2) mapeo estático de .env / defaults
   const p = APP_ROOTS[key];
   return p ? path.resolve(p) : null;
 }
@@ -80,7 +86,14 @@ function resolvePreviewTarget(p) {
   let extra = p.extra;
   if (typeof extra === 'string') { try { extra = JSON.parse(extra); } catch { extra = {}; } }
   extra = extra || {};
-  const root = appRootFor(extra.app);
+  let root = appRootFor(extra.app);
+  // Fallback: el agente incluye la ruta absoluta de la carpeta en extra.local_root.
+  if (!root && extra.local_root) {
+    try {
+      const lr = path.resolve(String(extra.local_root));
+      if (fs.existsSync(lr) && fs.statSync(lr).isDirectory()) root = lr;
+    } catch {}
+  }
   if (!root) return { target: null, mode: null, reason: `app desconocida: ${extra.app || '(none)'}` };
   let rel = String(extra.page_path || '').replace(/^[\/\\]+/, '');
   if (!rel || rel.endsWith('/') || rel.endsWith('\\')) rel = path.join(rel, 'index.html');
@@ -150,10 +163,39 @@ r.get('/', async (req, res) => {
   res.json(rows);
 });
 
+// Borra previews (errores detectados). Sin filtro -> TODAS.
+// Opcional ?status=pending,ignored para limitar a esos estados.
+r.delete('/', async (req, res, next) => {
+  try {
+    let sql = 'DELETE FROM previews';
+    const params = [];
+    const status = req.query.status;
+    if (status) {
+      const list = String(status).split(',').map(s => s.trim()).filter(Boolean);
+      if (list.length === 1) { sql += ' WHERE status = ?'; params.push(list[0]); }
+      else if (list.length > 1) {
+        sql += ` WHERE status IN (${list.map(() => '?').join(',')})`;
+        params.push(...list);
+      }
+    }
+    const [result] = await pool.execute(sql, params);
+    res.json({ ok: true, deleted: result.affectedRows ?? 0 });
+  } catch (e) { next(e); }
+});
+
 r.get('/:id', async (req, res) => {
   const [[row]] = await pool.execute('SELECT * FROM previews WHERE id = ?', [req.params.id]);
   if (!row) return res.status(404).json({ error: 'no encontrado' });
   res.json(row);
+});
+
+// Borra una sola preview por id.
+r.delete('/:id', async (req, res, next) => {
+  try {
+    const [result] = await pool.execute('DELETE FROM previews WHERE id = ?', [req.params.id]);
+    if (!result.affectedRows) return res.status(404).json({ error: 'no encontrado' });
+    res.json({ ok: true, deleted: result.affectedRows });
+  } catch (e) { next(e); }
 });
 
 r.post('/:id/approve', async (req, res) => {
@@ -422,6 +464,94 @@ r.post('/:id/repair', async (req, res, next) => {
       priority: p.priority,
       target,
     });
+  } catch (e) { next(e); }
+});
+
+// ---- Arreglo DETERMINISTA (sin IA) ----------------------------------------
+// Usa error_catalog.fix_type='replace' + fix_search/fix_replace/fix_flags para
+// aplicar una sustitución por regex sobre el archivo del cliente. El motor sabe
+// exactamente qué cambiar porque viene del catálogo, no de un modelo.
+r.post('/:id/autofix', async (req, res, next) => {
+  try {
+    const [[p]] = await pool.execute('SELECT * FROM previews WHERE id = ?', [req.params.id]);
+    if (!p) return res.status(404).json({ error: 'no encontrado' });
+    if (p.status === 'applied') return res.status(400).json({ error: 'ya aplicado' });
+    if (!p.catalog_code) return res.status(400).json({ error: 'esta preview no está mapeada a una entrada del catálogo' });
+
+    // Localiza la entrada del catálogo (prioriza la plataforma detectada).
+    let cat = null;
+    if (p.deployer) {
+      const [[c]] = await pool.execute(
+        'SELECT * FROM error_catalog WHERE code = ? AND platform = ? LIMIT 1', [p.catalog_code, p.deployer]);
+      cat = c || null;
+    }
+    if (!cat) {
+      const [[c]] = await pool.execute(
+        'SELECT * FROM error_catalog WHERE code = ? LIMIT 1', [p.catalog_code]);
+      cat = c || null;
+    }
+    if (!cat) return res.status(404).json({ error: `código de catálogo desconocido: ${p.catalog_code}` });
+    if (cat.fix_type !== 'replace' || !cat.fix_search) {
+      return res.status(400).json({ error: `este error no tiene arreglo determinista (fix_type=${cat.fix_type}). Usa "Arreglar con IA".`, fix_type: cat.fix_type });
+    }
+
+    const { target, reason } = resolvePreviewTarget(p);
+    if (!target) return res.status(400).json({ error: `ruta inválida: ${reason || 'sin app/file'}` });
+    if (!fs.existsSync(target)) return res.status(400).json({ error: `archivo destino no existe: ${target}` });
+
+    // compileRegex traduce un eventual prefijo inline (?i)…; añadimos fix_flags encima.
+    function buildRx() {
+      const base = compileRegex(cat.fix_search);
+      if (!base) return null;
+      let flags = base.flags;
+      for (const f of (cat.fix_flags || '')) if (!flags.includes(f)) flags += f;
+      return new RegExp(base.source, flags);
+    }
+    let rx = buildRx();
+    if (!rx) return res.status(500).json({ error: 'regex de catálogo inválida' });
+
+    const before = fs.readFileSync(target, 'utf8');
+    if (!rx.test(before)) {
+      return res.status(409).json({ error: 'el patrón de arreglo no aparece en el archivo (puede que ya esté corregido o el archivo no sea el correcto)' });
+    }
+    // Reconstruye la regex (test() avanza lastIndex en regex globales).
+    rx = buildRx();
+    const repl = cat.fix_replace != null ? String(cat.fix_replace) : '';
+    const after = before.replace(rx, repl);
+    if (after === before) return res.status(409).json({ error: 'la sustitución no produjo cambios' });
+
+    const diffNote = `[autofix ${cat.platform}/${cat.code}] sustitución determinista aplicada\n→ ${cat.solution || ''}`;
+
+    // ¿GitHub o disco local? (mismo criterio que /approve)
+    let extraObj = p.extra;
+    if (typeof extraObj === 'string') { try { extraObj = JSON.parse(extraObj); } catch { extraObj = {}; } }
+    const repoMap = repoForApp(extraObj?.app);
+    if (ghEnabled() && repoMap) {
+      let repoPath = String(extraObj?.page_path || '').replace(/^[\/\\]+/, '');
+      if (!repoPath || repoPath.endsWith('/') || repoPath.endsWith('\\')) repoPath = (repoPath || '') + 'index.html';
+      try {
+        const proposal = await ghProxyPropose({
+          owner: repoMap.owner, repo: repoMap.repo, baseBranch: repoMap.branch || 'main',
+          files: [{ path: repoPath, content: after }],
+          message: `fix(avantdef): autofix ${cat.code}`,
+          priority: p.priority, previewId: p.id,
+        });
+        await pool.execute(
+          `UPDATE previews SET status='applied', diagnosis=?, pr_url=?, pr_branch=?, pr_critical=? WHERE id=?`,
+          [diffNote, proposal.pr?.url || null, proposal.branch || null, proposal.critical ? 1 : 0, p.id]);
+        return res.json({ ok: true, mode: 'github', code: cat.code, pr: { url: proposal.pr?.url, branch: proposal.branch, critical: proposal.critical, merged: proposal.merged } });
+      } catch (e) {
+        return res.status(502).json({ error: `github-proxy falló: ${e.message}` });
+      }
+    }
+
+    const backup = `${target}.${Date.now()}.bak`;
+    fs.copyFileSync(target, backup);
+    fs.writeFileSync(target, after, 'utf8');
+    await pool.execute(
+      `UPDATE previews SET status='applied', diagnosis=?, backup_path=? WHERE id=?`,
+      [diffNote, backup, p.id]);
+    res.json({ ok: true, mode: 'local', code: cat.code, backup, target });
   } catch (e) { next(e); }
 });
 
